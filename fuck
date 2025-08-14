@@ -1,0 +1,211 @@
+#!/bin/bash
+
+CONFIG_DIR="$HOME/.config/fuck"
+CONFIG_FILE="$CONFIG_DIR/settings"
+
+lang="zh"
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    if [ -z "$LANG" ]; then
+        LANG="zh"
+    fi
+else
+    LANG="zh"
+fi
+
+if [ "$LANG" = "zh" ]; then
+    msg_crworld_prompt="您确定要执行此命令？此命令会删除您的系统！"
+    msg_option_no="否"
+    msg_option_yes="是"
+    msg_countdown_terminate="使用Ctrl+C终止"
+    msg_boom="Boom！"
+    msg_wise_choice="成功停止！正在中止操作。"
+    msg_deleting_dir="正在删除目录："
+    msg_dir_cleared="目录已清空。"
+    msg_deleting_files="正在删除目录中的所有文件："
+    msg_files_cleared="文件已清空。"
+    msg_dir_not_exist="错误：目录 '%s' 不存在。"
+    msg_no_permission="错误：没有对目录 '%s' 的写入权限。"
+    msg_delete_failed_dir="错误：无法删除目录 '%s' 的内容。"
+    msg_delete_failed_files="错误：无法删除目录 '%s' 中的文件。"
+    msg_path_traversal="错误：在 '%s' 中检测到路径遍历攻击。"
+    msg_system_dir_error="错误：无法操作系统目录 '%s'（从 '%s' 解析）。"
+else
+    msg_crworld_prompt="Are you sure you want to execute this command? This command will delete your system!"
+    msg_option_no="No"
+    msg_option_yes="Yes"
+    msg_countdown_terminate="Use Ctrl+C to terminate"
+    msg_boom="Boom!"
+    msg_wise_choice="Wise choice. Aborting operation."
+    msg_deleting_dir="Deleting directory:"
+    msg_dir_cleared="Directory cleared."
+    msg_deleting_files="Deleting all files in directory:"
+    msg_files_cleared="Files cleared."
+    msg_dir_not_exist="Error: Directory '%s' does not exist."
+    msg_no_permission="Error: No write permission to '%s' directory."
+    msg_delete_failed_dir="Error: Failed to delete contents of '%s'."
+    msg_delete_failed_files="Error: Failed to delete files in '%s'."
+    msg_path_traversal="Error: Path traversal detected in '%s'."
+    msg_system_dir_error="Error: Cannot operate on system directory '%s' (resolved from '%s')."
+fi
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+select_option() {
+    ESC=$( printf "\033" )
+    cursor_blink_on()  { printf "$ESC[?25h"; }
+    cursor_blink_off() { printf "$ESC[?25l"; }
+    cursor_to()        { printf "$ESC[$1;${2:-1}H"; }
+    print_option()     { printf "   $1 "; }
+    print_selected()   { printf "$ESC[7m > $1 $ESC[27m"; }
+    get_cursor_row()   { IFS=';' read -sdR -p $'\E[6n' ROW COL; echo ${ROW#*[}; }
+    key_input()        { read -s -n3 key 2>/dev/null >&2
+                         if [[ $key = $ESC[A ]]; then echo up;    fi
+                         if [[ $key = $ESC[B ]]; then echo down;  fi
+                         if [[ $key = "" ]];  then echo enter; fi; }
+
+    for ((i=0; i<$#; i++)); do
+        echo
+    done
+
+    local lastrow=`get_cursor_row`
+    local startrow=$(($lastrow - $#))
+
+    cleanup_terminal() {
+        cursor_blink_on
+        stty echo
+        printf '\n'
+        exit 130
+    }
+    trap cleanup_terminal 2 15 1
+    cursor_blink_off
+
+    local selected=0
+    while true; do
+        local idx=0
+        for opt; do
+            cursor_to $(($startrow + $idx))
+            if [ $idx -eq $selected ]; then
+                print_selected "$opt"
+            else
+                print_option "$opt"
+            fi
+            ((idx++))
+        done
+
+        case `key_input` in
+            enter) break;;
+            up)    ((selected--));
+                   if [ $selected -lt 0 ]; then selected=$(($# - 1)); fi;;
+            down)  ((selected++));
+                   if [ $selected -ge $# ]; then selected=0; fi;;
+        esac
+    done
+
+    cursor_to $lastrow
+    printf "\n"
+    cursor_blink_on
+
+    return $selected
+}
+
+crworld_easter_egg() {
+    clear
+    echo "$msg_crworld_prompt"
+    
+    local options=("$msg_option_no" "$msg_option_yes")
+    local choice
+    select_option "${options[@]}"
+    choice=$?
+
+    if [ $choice -eq 1 ]; then
+        for i in {5..1}; do
+            echo -ne "${YELLOW}$i... ($msg_countdown_terminate)${NC}\r"
+            sleep 1
+        done
+        echo -e "\n${RED}$msg_boom${NC}"
+    else
+        echo "$msg_wise_choice"
+    fi
+    exit 0
+}
+
+main() {
+    for arg in "$@"; do
+        if [ "$arg" == "crworld" ]; then
+            crworld_easter_egg
+        fi
+    done
+
+    local target_dir="."
+    local clean_mode=false
+
+    for arg in "$@"; do
+        if [ "$arg" == "-c" ]; then
+            clean_mode=true
+        elif [ -d "$arg" ]; then
+            case "$arg" in
+                *../*|*/../*|../*|*/..*)  
+                    printf -v error_msg "$msg_path_traversal" "$arg"
+                    echo -e "${RED}$error_msg${NC}" >&2
+                    exit 1
+                    ;;
+                /*)
+                    real_path="$(readlink -f "$arg" 2>/dev/null || echo "$arg")"
+                    if [ "$real_path" = "/" ] || [ "$real_path" = "/bin" ] || [ "$real_path" = "/usr" ] || [ "$real_path" = "/etc" ] || [ "$real_path" = "/var" ] || [ "$real_path" = "/sys" ] || [ "$real_path" = "/proc" ]; then
+                        printf -v error_msg "$msg_system_dir_error" "$real_path" "$arg"
+                        echo -e "${RED}$error_msg${NC}" >&2
+                        exit 1
+                    fi
+                    target_dir="$arg"
+                    ;;
+                *)
+                    real_path="$(readlink -f "$arg" 2>/dev/null || echo "$arg")"
+                    case "$real_path" in
+                        /|/bin|/usr|/etc|/var|/sys|/proc)
+                            echo -e "${RED}Error: Cannot operate on system directory '$real_path' (resolved from '$arg')${NC}" >&2
+                            exit 1
+                            ;;
+                    esac
+                    target_dir="$arg"
+                    ;;
+            esac
+        fi
+    done
+
+    if [ ! -d "$target_dir" ]; then
+        printf -v error_msg "$msg_dir_not_exist" "$target_dir"
+        echo -e "${RED}$error_msg${NC}" >&2
+        exit 1
+    fi
+
+    if [ ! -w "$target_dir" ]; then
+        printf -v error_msg "$msg_no_permission" "$target_dir"
+        echo -e "${RED}$error_msg${NC}" >&2
+        exit 1
+    fi
+
+    if $clean_mode; then
+        echo -e "${YELLOW}$msg_deleting_dir${NC} $target_dir"
+        if ! find "$target_dir" -mindepth 1 -delete 2>/dev/null; then
+            printf -v error_msg "$msg_delete_failed_dir" "$target_dir"
+            echo -e "${RED}$error_msg${NC}" >&2
+            exit 1
+        fi
+        echo -e "${GREEN}$msg_dir_cleared${NC}"
+    else
+        echo -e "${YELLOW}$msg_deleting_files${NC} $target_dir"
+        if ! find "$target_dir" -maxdepth 1 -type f -delete 2>/dev/null; then
+            printf -v error_msg "$msg_delete_failed_files" "$target_dir"
+            echo -e "${RED}$error_msg${NC}" >&2
+            exit 1
+        fi
+        echo -e "${GREEN}$msg_files_cleared${NC}"
+    fi
+}
+
+main "$@"
